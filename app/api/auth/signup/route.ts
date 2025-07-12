@@ -1,119 +1,101 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcryptjs';
-import { z } from 'zod';
+// app/api/auth/signup/route.ts
+import { NextRequest, NextResponse } from 'next/server'
+import { PrismaClient } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient()
 
-// Validation schema
-const signupSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters').optional(),
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-});
-
-// POST /api/auth/signup
+// POST /api/auth/signup - Public signup endpoint
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    console.log('Signup request received')
     
-    // Validate input
-    const validatedData = signupSchema.parse(body);
-    const { name, email, password } = validatedData;
+    let body
+    try {
+      body = await request.json()
+      console.log('Request body:', body)
+    } catch (error) {
+      console.error('JSON parsing error:', error)
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      )
+    }
 
+    const { name, email, password } = body
+
+    // Validate required fields
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: 'Email and password are required' },
+        { status: 400 }
+      )
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return NextResponse.json(
+        { error: 'Invalid email format' },
+        { status: 400 }
+      )
+    }
+
+    // Validate password length
+    if (password.length < 6) {
+      return NextResponse.json(
+        { error: 'Password must be at least 6 characters long' },
+        { status: 400 }
+      )
+    }
+
+    console.log('Checking if user exists...')
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+      where: { email }
+    })
 
     if (existingUser) {
       return NextResponse.json(
         { error: 'User with this email already exists' },
-        { status: 400 }
-      );
+        { status: 409 }
+      )
     }
 
+    console.log('Hashing password...')
     // Hash password
-    const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const hashedPassword = await bcrypt.hash(password, 12)
 
-    // Create user
+    console.log('Creating user...')
+    // Create user (always as USER role for public signup)
     const newUser = await prisma.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        role: 'USER', // Default role from enum
+        role: 'USER' // Public signup always creates regular users
       },
       select: {
         id: true,
         name: true,
         email: true,
         role: true,
-        createdAt: true,
-      },
-    });
+        image: true,
+        emailVerified: true
+      }
+    })
 
-    return NextResponse.json(
-      { 
-        message: 'User created successfully',
-        user: newUser 
-      },
-      { status: 201 }
-    );
-
-  } catch (error) {
-    console.error('Signup error:', error);
-
-    // Handle Zod validation errors
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { 
-          error: 'Validation failed',
-          details: error.issues.map((err: { path: any[]; message: any; }) => ({
-            field: err.path.join('.'),
-            message: err.message
-          }))
-        },
-        { status: 400 }
-      );
-    }
-
-    // Handle Prisma unique constraint errors
-    if (typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'P2002') {
-      return NextResponse.json(
-        { error: 'User with this email already exists' },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  } finally {
-    await prisma.$disconnect();
-  }
-}
-
-// GET /api/auth/signup (Optional: Return signup form requirements)
-export async function GET() {
-  try {
+    console.log('User created successfully:', newUser.id)
     return NextResponse.json({
-      message: 'Signup endpoint',
-      requirements: {
-        name: 'Optional, minimum 2 characters',
-        email: 'Required, valid email format',
-        password: 'Required, minimum 6 characters'
-      },
-      roles: ['USER', 'ADMIN'], // Available roles from enum
-    });
+      message: 'User created successfully',
+      user: newUser
+    }, { status: 201 })
+
   } catch (error) {
-    console.error('Get signup info error:', error);
+    console.error('POST /api/auth/signup error:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
-    );
+    )
   }
 }

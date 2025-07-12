@@ -1,6 +1,5 @@
 // lib/auth.ts
 import { NextAuthOptions } from "next-auth"
-import { PrismaAdapter } from "@next-auth/prisma-adapter"
 import CredentialsProvider from "next-auth/providers/credentials"
 import bcrypt from "bcryptjs"
 import { prisma } from "../lib/prisma"
@@ -8,7 +7,8 @@ import { Role } from "./auth-helpers"
 // import { Role } from "@prisma/client"
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+  // Remove PrismaAdapter when using JWT sessions
+  // adapter: PrismaAdapter(prisma), // Comment this out
   providers: [
     CredentialsProvider({
       name: "credentials",
@@ -20,26 +20,21 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials?.password) {
           return null
         }
-
         const user = await prisma.user.findUnique({
           where: {
             email: credentials.email
           }
         })
-
         if (!user || !user.password) {
           return null
         }
-
         const isPasswordValid = await bcrypt.compare(
           credentials.password,
           user.password
         )
-
         if (!isPasswordValid) {
           return null
         }
-
         return {
           id: user.id,
           email: user.email,
