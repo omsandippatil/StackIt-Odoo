@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth' // Adjust path as needed
+import jwt from 'jsonwebtoken'
 import { prisma } from '@/lib/prisma' // Adjust path as needed
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
+
+// JWT secret from environment variables
+const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key'
 
 // Validation schemas
 const updateUserSchema = z.object({
@@ -18,21 +20,66 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(6, 'New password must be at least 6 characters'),
 })
 
+// Helper function to verify JWT and get user
+async function verifyTokenAndGetUser(request: NextRequest) {
+  const token = request.cookies.get('auth-token')?.value
+  
+  if (!token) {
+    return null
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any
+    
+    // Check if session exists and is valid
+    const session = await prisma.session.findUnique({
+      where: { sessionToken: token },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            image: true,
+            emailVerified: true
+          }
+        }
+      }
+    })
+
+    if (!session || session.expires < new Date()) {
+      // Clean up expired session
+      if (session) {
+        await prisma.session.delete({
+          where: { sessionToken: token }
+        })
+      }
+      return null
+    }
+
+    return session.user
+  } catch (error) {
+    console.error('Token verification error:', error)
+    return null
+  }
+}
+
 // GET /api/auth/me
 // Return current authenticated user with related data
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const user = await verifyTokenAndGetUser(request)
     
-    if (!session?.user?.id) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+    const fullUser = await prisma.user.findUnique({
+      where: { id: user.id },
       include: {
         userRoles: {
           select: {
@@ -59,7 +106,7 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    if (!user) {
+    if (!fullUser) {
       return NextResponse.json(
         { error: 'User not found' },
         { status: 404 }
@@ -67,17 +114,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Return user data with proper structure
-    const { password, ...userWithoutPassword } = user
+    const { password, ...userWithoutPassword } = fullUser
     
     return NextResponse.json({
       user: {
         ...userWithoutPassword,
-        customRoles: user.userRoles.map((ur) => ur.role),
+        customRoles: fullUser.userRoles.map((ur) => ur.role),
         stats: {
-          questionsCount: user._count.questions,
-          commentsCount: user._count.comments,
-          votesCount: user._count.votes,
-          unreadNotifications: user._count.notifications,
+          questionsCount: fullUser._count.questions,
+          commentsCount: fullUser._count.comments,
+          votesCount: fullUser._count.votes,
+          unreadNotifications: fullUser._count.notifications,
         }
       }
     })
@@ -95,9 +142,9 @@ export async function GET(request: NextRequest) {
 // Update user profile information
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const user = await verifyTokenAndGetUser(request)
     
-    if (!session?.user?.id) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -114,7 +161,7 @@ export async function POST(request: NextRequest) {
       const existingUser = await prisma.user.findFirst({
         where: {
           email: validatedData.email,
-          id: { not: session.user.id }
+          id: { not: user.id }
         }
       })
       
@@ -133,7 +180,7 @@ export async function POST(request: NextRequest) {
     }
 
     const updatedUser = await prisma.user.update({
-      where: { id: session.user.id },
+      where: { id: user.id },
       data: updateData,
       include: {
         userRoles: {
@@ -186,9 +233,9 @@ export async function PUT(request: NextRequest) {
 // Change user password (with current password verification)
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const user = await verifyTokenAndGetUser(request)
     
-    if (!session?.user?.id) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -199,12 +246,12 @@ export async function PATCH(request: NextRequest) {
     const { currentPassword, newPassword } = changePasswordSchema.parse(body)
 
     // Get current user with password
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+    const fullUser = await prisma.user.findUnique({
+      where: { id: user.id },
       select: { password: true }
     })
 
-    if (!user || !user.password) {
+    if (!fullUser || !fullUser.password) {
       return NextResponse.json(
         { error: 'User not found or no password set' },
         { status: 404 }
@@ -212,7 +259,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password)
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, fullUser.password)
     if (!isCurrentPasswordValid) {
       return NextResponse.json(
         { error: 'Current password is incorrect' },
@@ -225,7 +272,7 @@ export async function PATCH(request: NextRequest) {
 
     // Update password
     await prisma.user.update({
-      where: { id: session.user.id },
+      where: { id: user.id },
       data: { password: hashedNewPassword }
     })
 
@@ -253,9 +300,9 @@ export async function PATCH(request: NextRequest) {
 // Delete user account (soft delete or hard delete)
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const user = await verifyTokenAndGetUser(request)
     
-    if (!session?.user?.id) {
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -269,19 +316,19 @@ export async function DELETE(request: NextRequest) {
       // Hard delete - permanently remove user and all related data
       await prisma.$transaction(async (tx) => {
         // Delete in order to respect foreign key constraints
-        await tx.notification.deleteMany({ where: { userId: session.user.id } })
-        await tx.vote.deleteMany({ where: { userId: session.user.id } })
-        await tx.comment.deleteMany({ where: { authorId: session.user.id } })
-        await tx.question.deleteMany({ where: { authorId: session.user.id } })
-        await tx.userRole.deleteMany({ where: { userId: session.user.id } })
-        await tx.account.deleteMany({ where: { userId: session.user.id } })
-        await tx.session.deleteMany({ where: { userId: session.user.id } })
-        await tx.user.delete({ where: { id: session.user.id } })
+        await tx.notification.deleteMany({ where: { userId: user.id } })
+        await tx.vote.deleteMany({ where: { userId: user.id } })
+        await tx.comment.deleteMany({ where: { authorId: user.id } })
+        await tx.question.deleteMany({ where: { authorId: user.id } })
+        await tx.userRole.deleteMany({ where: { userId: user.id } })
+        await tx.account.deleteMany({ where: { userId: user.id } })
+        await tx.session.deleteMany({ where: { userId: user.id } })
+        await tx.user.delete({ where: { id: user.id } })
       })
     } else {
       // Soft delete - mark user as deleted but keep data
       await prisma.user.update({
-        where: { id: session.user.id },
+        where: { id: user.id },
         data: {
           email: null,
           name: 'Deleted User',
