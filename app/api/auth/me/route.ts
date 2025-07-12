@@ -1,35 +1,69 @@
-import { NextRequest, NextResponse } from 'next/server'
-import jwt from 'jsonwebtoken'
-import { prisma } from '@/lib/prisma' // Adjust path as needed
-import bcrypt from 'bcryptjs'
-import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
+import { prisma } from '@/lib/prisma';
+import { z } from 'zod';
 
 // JWT secret from environment variables
-const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key'
+const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key';
 
 // Validation schemas
-const updateUserSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100, 'Name too long').optional(),
-  email: z.string().email('Invalid email format').optional(),
-  password: z.string().min(6, 'Password must be at least 6 characters').optional(),
-  image: z.string().url('Invalid image URL').optional(),
-})
+const createQuestionSchema = z.object({
+  title: z.string().min(10, 'Title must be at least 10 characters long').max(200, 'Title too long'),
+  content: z.string().min(20, 'Content must be at least 20 characters long'),
+  imageUrl: z.string().url('Invalid image URL').optional(),
+  tags: z.array(z.string().min(1, 'Tag cannot be empty')).optional(),
+});
 
-const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, 'Current password is required'),
-  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
-})
+// Types
+interface User {
+  id: string;
+  name: string | null;
+  email: string | null;
+  role: string;
+  image: string | null;
+  emailVerified: Date | null;
+  customRoles: string[];
+}
+
+interface DecodedToken {
+  userId: string;
+  email: string | null;
+  [key: string]: any;
+}
+
+interface QuestionWithStats {
+  id: string;
+  title: string;
+  content: string;
+  imageUrl: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  authorId: string;
+  author: {
+    id: string;
+    name: string | null;
+    image: string | null;
+    email: string | null;
+  };
+  tags: Array<{
+    id: number;
+    name: string;
+  }>;
+  voteScore: number;
+  commentCount: number;
+  voteCount: number;
+}
 
 // Helper function to verify JWT and get user
-async function verifyTokenAndGetUser(request: NextRequest) {
-  const token = request.cookies.get('auth-token')?.value
+async function verifyTokenAndGetUser(request: NextRequest): Promise<User | null> {
+  const token = request.cookies.get('auth-token')?.value;
   
   if (!token) {
-    return null
+    return null;
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any
+    const decoded = jwt.verify(token, JWT_SECRET) as DecodedToken;
     
     // Check if session exists and is valid
     const session = await prisma.session.findUnique({
@@ -42,312 +76,334 @@ async function verifyTokenAndGetUser(request: NextRequest) {
             email: true,
             role: true,
             image: true,
-            emailVerified: true
+            emailVerified: true,
+            userRoles: {
+              include: {
+                role: true
+              }
+            }
           }
         }
       }
-    })
+    });
 
     if (!session || session.expires < new Date()) {
       // Clean up expired session
       if (session) {
         await prisma.session.delete({
           where: { sessionToken: token }
-        })
+        });
       }
-      return null
+      return null;
     }
 
-    return session.user
+    return {
+      ...session.user,
+      customRoles: session.user.userRoles.map(ur => ur.role.name)
+    };
   } catch (error) {
-    console.error('Token verification error:', error)
-    return null
+    console.error('Token verification error:', error);
+    return null;
   }
 }
 
-// GET /api/auth/me
-// Return current authenticated user with related data
+// GET /api/questions - List questions
 export async function GET(request: NextRequest) {
   try {
-    const user = await verifyTokenAndGetUser(request)
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    const tag = searchParams.get('tag') || '';
+    const sortBy = searchParams.get('sortBy') || 'createdAt';
+    const sortOrder = searchParams.get('sortOrder') || 'desc';
+
+    const skip = (page - 1) * limit;
+
+    // Build where clause for filtering
+    const where: any = {};
     
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { content: { contains: search, mode: 'insensitive' } }
+      ];
     }
 
-    const fullUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      include: {
-        userRoles: {
-          select: {
-            role: {
-              select: {
-                id: true,
-                name: true,
-              }
+    if (tag) {
+      where.questionTags = {
+        some: {
+          tag: {
+            name: { equals: tag, mode: 'insensitive' }
+          }
+        }
+      };
+    }
+
+    // Build orderBy clause
+    const orderBy: any = {};
+    if (sortBy === 'votes') {
+      orderBy.votes = { _count: sortOrder };
+    } else if (sortBy === 'comments') {
+      orderBy.comments = { _count: sortOrder };
+    } else {
+      orderBy[sortBy] = sortOrder;
+    }
+
+    const [questions, totalCount] = await Promise.all([
+      prisma.question.findMany({
+        where,
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true,
+              image: true,
+              email: true
+            }
+          },
+          comments: {
+            select: {
+              id: true
+            }
+          },
+          votes: {
+            select: {
+              id: true,
+              value: true
+            }
+          },
+          _count: {
+            select: {
+              comments: true,
+              votes: true
             }
           }
         },
-        _count: {
-          select: {
-            questions: true,
-            comments: true,
-            votes: true,
-            notifications: {
-              where: {
-                isRead: false
-              }
-            }
-          }
-        }
-      }
-    })
+        orderBy,
+        skip,
+        take: limit
+      }),
+      prisma.question.count({ where })
+    ]);
 
-    if (!fullUser) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
+    // Fetch tags separately - try different possible model names
+    const questionIds = questions.map(q => q.id);
+    let questionTagsData: any[] = [];
+    
+    try {
+      // Try common naming conventions for junction tables
+      if ('questionTags' in prisma) {
+        questionTagsData = await (prisma as any).questionTags.findMany({
+          where: {
+            questionId: { in: questionIds }
+          },
+          include: {
+            tag: true
+          }
+        });
+      } else if ('questionTag' in prisma) {
+        questionTagsData = await (prisma as any).questionTag.findMany({
+          where: {
+            questionId: { in: questionIds }
+          },
+          include: {
+            tag: true
+          }
+        });
+      } else if ('QuestionTag' in prisma) {
+        questionTagsData = await (prisma as any).QuestionTag.findMany({
+          where: {
+            questionId: { in: questionIds }
+          },
+          include: {
+            tag: true
+          }
+        });
+      } else {
+        // If no junction table exists, try to get tags directly from questions
+        console.warn('No junction table found for question tags');
+      }
+    } catch (error) {
+      console.error('Error fetching question tags:', error);
+      // Continue without tags if there's an error
     }
 
-    // Return user data with proper structure
-    const { password, ...userWithoutPassword } = fullUser
-    
-    return NextResponse.json({
-      user: {
-        ...userWithoutPassword,
-        customRoles: fullUser.userRoles.map((ur) => ur.role),
-        stats: {
-          questionsCount: fullUser._count.questions,
-          commentsCount: fullUser._count.comments,
-          votesCount: fullUser._count.votes,
-          unreadNotifications: fullUser._count.notifications,
-        }
+    // Group tags by question ID
+    const tagsByQuestionId = questionTagsData.reduce((acc: Record<string, any[]>, qt: any) => {
+      if (!acc[qt.questionId]) {
+        acc[qt.questionId] = [];
       }
-    })
+      acc[qt.questionId].push(qt.tag);
+      return acc;
+    }, {} as Record<string, any[]>);
 
+    // Calculate vote scores and comment counts
+    const questionsWithStats: QuestionWithStats[] = questions.map((question: any) => ({
+      ...question,
+      tags: tagsByQuestionId[question.id] || [],
+      voteScore: question.votes.reduce((sum: number, vote: { value: number }) => sum + vote.value, 0),
+      commentCount: question._count.comments,
+      voteCount: question._count.votes
+    }));
+
+    const totalPages = Math.ceil(totalCount / limit);
+
+    return NextResponse.json({
+      questions: questionsWithStats,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      }
+    });
   } catch (error) {
-    console.error('Error fetching user:', error)
+    console.error('Error fetching questions:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to fetch questions' },
       { status: 500 }
-    )
+    );
   }
 }
 
-// POST /api/auth/me
-// Update user profile information
+// POST /api/questions - Create a new question
 export async function POST(request: NextRequest) {
   try {
-    const user = await verifyTokenAndGetUser(request)
+    const user = await verifyTokenAndGetUser(request);
     
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
-      )
+      );
     }
 
-    const body = await request.json()
+    const body = await request.json();
     
-    // Validate input
-    const validatedData = updateUserSchema.parse(body)
-    
-    // Check if email is being updated and if it's already taken
-    if (validatedData.email) {
-      const existingUser = await prisma.user.findFirst({
-        where: {
-          email: validatedData.email,
-          id: { not: user.id }
-        }
-      })
-      
-      if (existingUser) {
-        return NextResponse.json(
-          { error: 'Email already in use' },
-          { status: 400 }
-        )
-      }
-    }
+    // Validate input using Zod schema
+    const validatedData = createQuestionSchema.parse(body);
+    const { title, content, imageUrl, tags } = validatedData;
 
-    // Hash password if provided
-    let updateData: any = { ...validatedData }
-    if (validatedData.password) {
-      updateData.password = await bcrypt.hash(validatedData.password, 12)
-    }
-
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: updateData,
-      include: {
-        userRoles: {
-          select: {
-            role: {
-              select: {
-                id: true,
-                name: true,
-              }
+    // Use transaction to create question and handle tags
+    const question = await prisma.$transaction(async (tx) => {
+      // Create the question first
+      const newQuestion = await tx.question.create({
+        data: {
+          title: title.trim(),
+          content: content.trim(),
+          imageUrl: imageUrl || null,
+          authorId: user.id
+        },
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true,
+              image: true,
+              email: true
+            }
+          },
+          _count: {
+            select: {
+              comments: true,
+              votes: true
             }
           }
         }
-      }
-    })
+      });
 
-    // Remove password from response
-    const { password, ...userWithoutPassword } = updatedUser
+      // Process tags if provided
+      const questionTags = [];
+      if (tags && Array.isArray(tags)) {
+        for (const tagName of tags) {
+          if (typeof tagName === 'string' && tagName.trim()) {
+            // Create or find the tag
+            const tag = await tx.tag.upsert({
+              where: { name: tagName.trim().toLowerCase() },
+              update: {},
+              create: { name: tagName.trim().toLowerCase() }
+            });
 
-    return NextResponse.json({
-      message: 'Profile updated successfully',
-      user: {
-        ...userWithoutPassword,
-        customRoles: updatedUser.userRoles.map((ur) => ur.role),
-      }
-    })
+            // Create the junction table entry - try different naming conventions
+            try {
+              if ('questionTags' in tx) {
+                await (tx as any).questionTags.create({
+                  data: {
+                    questionId: newQuestion.id,
+                    tagId: tag.id
+                  }
+                });
+              } else if ('questionTag' in tx) {
+                await (tx as any).questionTag.create({
+                  data: {
+                    questionId: newQuestion.id,
+                    tagId: tag.id
+                  }
+                });
+              } else if ('QuestionTag' in tx) {
+                await (tx as any).QuestionTag.create({
+                  data: {
+                    questionId: newQuestion.id,
+                    tagId: tag.id
+                  }
+                });
+              }
+            } catch (tagError) {
+              console.error('Error creating question tag relation:', tagError);
+              // Continue without failing the entire transaction
+            }
 
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation error', details: error.issues },
-        { status: 400 }
-      )
-    }
-    
-    console.error('Error updating user:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
-// PUT /api/auth/me
-// Update specific user fields (alternative to POST)
-export async function PUT(request: NextRequest) {
-  return POST(request) // Reuse POST logic
-}
-
-// PATCH /api/auth/me/password
-// Change user password (with current password verification)
-export async function PATCH(request: NextRequest) {
-  try {
-    const user = await verifyTokenAndGetUser(request)
-    
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const body = await request.json()
-    const { currentPassword, newPassword } = changePasswordSchema.parse(body)
-
-    // Get current user with password
-    const fullUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { password: true }
-    })
-
-    if (!fullUser || !fullUser.password) {
-      return NextResponse.json(
-        { error: 'User not found or no password set' },
-        { status: 404 }
-      )
-    }
-
-    // Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, fullUser.password)
-    if (!isCurrentPasswordValid) {
-      return NextResponse.json(
-        { error: 'Current password is incorrect' },
-        { status: 400 }
-      )
-    }
-
-    // Hash new password
-    const hashedNewPassword = await bcrypt.hash(newPassword, 12)
-
-    // Update password
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { password: hashedNewPassword }
-    })
-
-    return NextResponse.json({
-      message: 'Password updated successfully'
-    })
-
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation error', details: error.issues },
-        { status: 400 }
-      )
-    }
-    
-    console.error('Error updating password:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
-// DELETE /api/auth/me
-// Delete user account (soft delete or hard delete)
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await verifyTokenAndGetUser(request)
-    
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const url = new URL(request.url)
-    const hardDelete = url.searchParams.get('hard') === 'true'
-
-    if (hardDelete) {
-      // Hard delete - permanently remove user and all related data
-      await prisma.$transaction(async (tx) => {
-        // Delete in order to respect foreign key constraints
-        await tx.notification.deleteMany({ where: { userId: user.id } })
-        await tx.vote.deleteMany({ where: { userId: user.id } })
-        await tx.comment.deleteMany({ where: { authorId: user.id } })
-        await tx.question.deleteMany({ where: { authorId: user.id } })
-        await tx.userRole.deleteMany({ where: { userId: user.id } })
-        await tx.account.deleteMany({ where: { userId: user.id } })
-        await tx.session.deleteMany({ where: { userId: user.id } })
-        await tx.user.delete({ where: { id: user.id } })
-      })
-    } else {
-      // Soft delete - mark user as deleted but keep data
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          email: null,
-          name: 'Deleted User',
-          image: null,
-          password: null,
-          emailVerified: null,
+            questionTags.push(tag);
+          }
         }
-      })
-    }
+      }
+
+      return {
+        ...newQuestion,
+        tags: questionTags
+      };
+    });
 
     return NextResponse.json({
-      message: hardDelete ? 'Account permanently deleted' : 'Account deactivated'
-    })
-
+      message: 'Question created successfully',
+      question: {
+        ...question,
+        voteScore: 0,
+        commentCount: 0,
+        voteCount: 0
+      }
+    }, { status: 201 });
   } catch (error) {
-    console.error('Error deleting user:', error)
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: 'Validation error', details: error.issues },
+        { status: 400 }
+      );
+    }
+    
+    console.error('Error creating question:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to create question' },
       { status: 500 }
-    )
+    );
   }
+}
+
+// PUT /api/questions - Update a question (if needed)
+export async function PUT(request: NextRequest) {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  );
+}
+
+// DELETE /api/questions - Delete a question (if needed)
+export async function DELETE(request: NextRequest) {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  );
 }

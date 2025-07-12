@@ -82,7 +82,7 @@ model Question {
 
   comments   Comment[]
   votes      Vote[]
-  tags       Tag[]     @relation("QuestionTags")
+  questionTags QuestionTag[]
 
   createdAt  DateTime  @default(now())
 }
@@ -90,10 +90,17 @@ model Question {
 model Tag {
   id        Int        @id @default(autoincrement())
   name      String     @unique
-  questions Question[] @relation("QuestionTags")
+  questionTags QuestionTag[]
 }
 
+model QuestionTag {
+  question   Question @relation(fields: [questionId], references: [id])
+  questionId Int
+  tag        Tag      @relation(fields: [tagId], references: [id])
+  tagId      Int
 
+  @@id([questionId, tagId])
+}
 
 model Comment {
   id         Int       @id @default(autoincrement())

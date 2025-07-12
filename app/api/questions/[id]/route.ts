@@ -40,9 +40,11 @@ export async function GET(
       }
       
       if (tag) {
-        where.tags = {
+        where.questionTags = {
           some: {
-            name: { equals: tag, mode: 'insensitive' }
+            tag: {
+              name: { equals: tag, mode: 'insensitive' }
+            }
           }
         };
       }
@@ -73,7 +75,11 @@ export async function GET(
                 image: true,
               }
             },
-            tags: true,
+            questionTags: {
+              include: {
+                tag: true
+              }
+            },
             _count: {
               select: {
                 comments: true,
@@ -88,12 +94,19 @@ export async function GET(
         prisma.question.count({ where })
       ]);
 
+      // Transform the response to match expected format
+      const transformedQuestions = questions.map(question => ({
+        ...question,
+        tags: question.questionTags.map((qt: any) => qt.tag),
+        questionTags: undefined // Remove from response
+      }));
+
       const totalPages = Math.ceil(totalCount / validatedLimit);
       const hasNextPage = validatedPage < totalPages;
       const hasPreviousPage = validatedPage > 1;
 
       return NextResponse.json({
-        questions,
+        questions: transformedQuestions,
         pagination: {
           currentPage: validatedPage,
           totalPages,
@@ -161,7 +174,11 @@ export async function GET(
             }
           }
         },
-        tags: true,
+        questionTags: {
+          include: {
+            tag: true
+          }
+        },
         _count: {
           select: {
             comments: true,
@@ -178,7 +195,14 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(question);
+    // Transform the response to match expected format
+    const transformedQuestion = {
+      ...question,
+      tags: question.questionTags.map((qt: any) => qt.tag),
+      questionTags: undefined // Remove from response
+    };
+
+    return NextResponse.json(transformedQuestion);
   } catch (error) {
     console.error('Error fetching question:', error);
     return NextResponse.json(
@@ -248,42 +272,52 @@ export async function PUT(
       );
     }
 
-    // Handle tags if provided
-    let tagConnections = undefined;
-    if (tags && Array.isArray(tags)) {
-      // First, disconnect all existing tags
-      await prisma.question.update({
+    // Use transaction to update question and handle tags
+    const updatedQuestion = await prisma.$transaction(async (tx) => {
+      // Update the question
+      const updated = await tx.question.update({
         where: { id: questionId },
         data: {
-          tags: {
-            set: []
-          }
+          title,
+          content,
+          imageUrl,
         }
       });
 
-      // Create or connect tags
-      const tagPromises = tags.map(async (tagName: string) => {
-        return prisma.tag.upsert({
-          where: { name: tagName },
-          create: { name: tagName },
-          update: {}
+      // Handle tags if provided
+      if (tags && Array.isArray(tags)) {
+        // Delete existing question tags
+        await tx.questionTag.deleteMany({
+          where: { questionId: questionId }
         });
-      });
 
-      const createdTags = await Promise.all(tagPromises);
-      tagConnections = {
-        connect: createdTags.map(tag => ({ id: tag.id }))
-      };
-    }
+        // Create or find tags and create question tags
+        if (tags.length > 0) {
+          const tagPromises = tags.map(async (tagName: string) => {
+            const tag = await tx.tag.upsert({
+              where: { name: tagName },
+              create: { name: tagName },
+              update: {}
+            });
+            
+            return tx.questionTag.create({
+              data: {
+                questionId: questionId,
+                tagId: tag.id
+              }
+            });
+          });
 
-    const updatedQuestion = await prisma.question.update({
+          await Promise.all(tagPromises);
+        }
+      }
+
+      return updated;
+    });
+
+    // Fetch the updated question with all relations
+    const questionWithRelations = await prisma.question.findUnique({
       where: { id: questionId },
-      data: {
-        title,
-        content,
-        imageUrl,
-        ...(tagConnections && { tags: tagConnections })
-      },
       include: {
         author: {
           select: {
@@ -293,7 +327,11 @@ export async function PUT(
             image: true,
           }
         },
-        tags: true,
+        questionTags: {
+          include: {
+            tag: true
+          }
+        },
         _count: {
           select: {
             comments: true,
@@ -303,7 +341,14 @@ export async function PUT(
       }
     });
 
-    return NextResponse.json(updatedQuestion);
+    // Transform the response to match expected format
+    const transformedQuestion = {
+      ...questionWithRelations,
+      tags: questionWithRelations?.questionTags.map((qt: any) => qt.tag) || [],
+      questionTags: undefined // Remove from response
+    };
+
+    return NextResponse.json(transformedQuestion);
   } catch (error) {
     console.error('Error updating question:', error);
     return NextResponse.json(
@@ -364,6 +409,10 @@ export async function DELETE(
 
     // Delete related data first (due to foreign key constraints)
     await prisma.$transaction([
+      // Delete question tags
+      prisma.questionTag.deleteMany({
+        where: { questionId: questionId }
+      }),
       // Delete votes
       prisma.vote.deleteMany({
         where: { questionId: questionId }
