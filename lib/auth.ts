@@ -3,7 +3,8 @@ import { NextAuthOptions } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 import bcrypt from "bcryptjs"
 import { prisma } from "../lib/prisma"
-import { Role } from "@prisma/client"
+import { Role } from "./auth-helpers"
+// import { Role } from "@prisma/client"
 
 export const authOptions: NextAuthOptions = {
   // Remove PrismaAdapter when using JWT sessions

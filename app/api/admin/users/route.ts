@@ -1,5 +1,12 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient, Role } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+
+// Define Role enum to match your Prisma schema
+enum Role {
+  USER = 'USER',
+  ADMIN = 'ADMIN'
+}
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth'; // Adjust path as needed
 

@@ -50,7 +50,7 @@ export async function GET(
     let downvotes = 0;
     let totalScore = 0;
 
-    voteStats.forEach((stat) => {
+    voteStats.forEach((stat: { value: number; _count: { value: number; }; }) => {
       if (stat.value === 1) {
         upvotes = stat._count.value;
         totalScore += stat._count.value;
@@ -211,7 +211,7 @@ export async function POST(
     let downvotes = 0;
     let totalScore = 0;
 
-    voteStats.forEach((stat) => {
+    voteStats.forEach((stat: { value: number; _count: { value: number; }; }) => {
       if (stat.value === 1) {
         upvotes = stat._count.value;
         totalScore += stat._count.value;

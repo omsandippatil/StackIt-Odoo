@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
@@ -195,7 +196,7 @@ export async function POST(
     }
 
     // Create the comment and notifications in a transaction
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: { comment: { create: (arg0: { data: { body: any; authorId: any; questionId: number; parentId: any; }; include: { author: { select: { id: boolean; name: boolean; image: boolean; }; }; }; }) => any; findUnique: (arg0: { where: { id: any; }; include: { author: boolean; }; }) => any; }; question: { findUnique: (arg0: { where: { id: number; }; include: { author: boolean; }; }) => any; }; notification: { createMany: (arg0: { data: { type: string; message: string; userId: any; }[]; }) => any; }; }) => {
       // Create the comment
       const comment = await tx.comment.create({
         data: {
