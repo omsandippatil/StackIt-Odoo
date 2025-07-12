@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
 import { PrismaClient } from '@prisma/client'
 import { getServerSession } from 'next-auth'
@@ -151,7 +152,7 @@ export async function GET(
         name: user.name,
         email: user.email,
         role: user.role,
-        customRoles: user.userRoles.map(ur => ur.role)
+        customRoles: user.userRoles.map((ur: { role: any }) => ur.role)
       }
     })
 

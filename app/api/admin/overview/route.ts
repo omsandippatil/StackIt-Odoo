@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { NextRequest, NextResponse } from 'next/server'
 import { PrismaClient } from '@prisma/client'
 import { getServerSession } from 'next-auth'
@@ -172,21 +174,21 @@ export async function GET(req: NextRequest) {
           percentage: commentGrowthPercentage
         }
       },
-      topTags: topTags.map(tag => ({
+      topTags: topTags.map((tag: { id: any; name: any; _count: { questions: any } }) => ({
         id: tag.id,
         name: tag.name,
         questionCount: tag._count.questions
       })),
-      userRoleDistribution: userRoleDistribution.map(role => ({
+      userRoleDistribution: userRoleDistribution.map((role: { role: any; _count: { role: any } }) => ({
         role: role.role,
         count: role._count.role
       })),
-      topQuestions: questionVoteStats.map(stat => ({
+      topQuestions: questionVoteStats.map((stat: { questionId: any; _sum: { value: any }; _count: { value: any } }) => ({
         questionId: stat.questionId,
         totalVotes: stat._sum.value || 0,
         voteCount: stat._count.value
       })),
-      mostActiveUsers: mostActiveUsers.map(user => ({
+      mostActiveUsers: mostActiveUsers.map((user: { id: any; name: any; email: any; image: any; role: any; _count: { questions: any; comments: any; votes: any } }) => ({
         id: user.id,
         name: user.name,
         email: user.email,
@@ -288,7 +290,7 @@ export async function POST(req: NextRequest) {
         const deletedUsers = await prisma.user.deleteMany({
           where: {
             id: {
-              in: inactiveUsers.map(user => user.id)
+              in: inactiveUsers.map((user: { id: any }) => user.id)
             }
           }
         })

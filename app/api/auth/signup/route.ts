@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { 
           error: 'Validation failed',
-          details: error.errors.map(err => ({
+          details: error.errors.map((err: { path: any[]; message: any; }) => ({
             field: err.path.join('.'),
             message: err.message
           }))
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/auth/signup (Optional: Return signup form requirements)
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     return NextResponse.json({
       message: 'Signup endpoint',

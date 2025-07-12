@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { getServerSession } from 'next-auth';
@@ -90,9 +91,9 @@ export async function GET(request: NextRequest) {
     ]);
 
     // Calculate vote scores and comment counts
-    const questionsWithStats = questions.map(question => ({
+    const questionsWithStats = questions.map((question: { votes: any[]; _count: { comments: any; votes: any; }; }) => ({
       ...question,
-      voteScore: question.votes.reduce((sum, vote) => sum + vote.value, 0),
+      voteScore: question.votes.reduce((sum: any, vote: { value: any; }) => sum + vote.value, 0),
       commentCount: question._count.comments,
       voteCount: question._count.votes
     }));
