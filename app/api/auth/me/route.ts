@@ -33,14 +33,7 @@ export async function GET(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        role: true,
-        emailVerified: true,
-        createdAt: true,
+      include: {
         userRoles: {
           select: {
             role: {
@@ -73,10 +66,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Return user data with proper structure
+    const { password, ...userWithoutPassword } = user
+    
     return NextResponse.json({
       user: {
-        ...user,
-        customRoles: user.userRoles.map(ur => ur.role),
+        ...userWithoutPassword,
+        customRoles: user.userRoles.map((ur) => ur.role),
         stats: {
           questionsCount: user._count.questions,
           commentsCount: user._count.comments,
@@ -139,13 +135,7 @@ export async function POST(request: NextRequest) {
     const updatedUser = await prisma.user.update({
       where: { id: session.user.id },
       data: updateData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        role: true,
-        emailVerified: true,
+      include: {
         userRoles: {
           select: {
             role: {
@@ -159,18 +149,21 @@ export async function POST(request: NextRequest) {
       }
     })
 
+    // Remove password from response
+    const { password, ...userWithoutPassword } = updatedUser
+
     return NextResponse.json({
       message: 'Profile updated successfully',
       user: {
-        ...updatedUser,
-        customRoles: updatedUser.userRoles.map(ur => ur.role),
+        ...userWithoutPassword,
+        customRoles: updatedUser.userRoles.map((ur) => ur.role),
       }
     })
 
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Validation error', details: error.errors },
+        { error: 'Validation error', details: error.issues },
         { status: 400 }
       )
     }
@@ -243,7 +236,7 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Validation error', details: error.errors },
+        { error: 'Validation error', details: error.issues },
         { status: 400 }
       )
     }
