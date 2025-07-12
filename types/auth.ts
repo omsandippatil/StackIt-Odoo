@@ -1,5 +1,9 @@
 // types/auth.ts
-import { Role } from "@prisma/client"
+// Define Role enum here if not exported from @prisma/client
+export enum Role {
+  USER = "USER",
+  ADMIN = "ADMIN"
+}
 import { DefaultSession, DefaultUser } from "next-auth"
 import { DefaultJWT } from "next-auth/jwt"
 

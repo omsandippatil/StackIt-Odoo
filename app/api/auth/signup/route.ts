@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { 
           error: 'Validation failed',
-          details: error.errors.map((err: { path: any[]; message: any; }) => ({
+          details: error.issues.map((err: { path: any[]; message: any; }) => ({
             field: err.path.join('.'),
             message: err.message
           }))
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Handle Prisma unique constraint errors
-    if (error.code === 'P2002') {
+    if (typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'P2002') {
       return NextResponse.json(
         { error: 'User with this email already exists' },
         { status: 400 }
